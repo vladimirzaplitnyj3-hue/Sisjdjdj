@@ -1,4 +1,6 @@
+# 📦 ВСЕ БИБЛИОТЕКИ ДЛЯ RETSING BOT
 pyrogram>=2.0.0
+python-telegram-bot>=20.7
 colorama>=0.4.6
 aiohttp>=3.8.0
 pytz>=2023.3
