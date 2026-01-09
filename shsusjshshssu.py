@@ -1,0 +1,524 @@
+#!/usr/bin/env python3
+"""
+╔══════════════════════════════════════╗
+║      RETSING BOT - ПРОФЕССИОНАЛЬНЫЙ  ║
+║        ТЕЛЕГРАМ БОТ ДЛЯ РАССЫЛКИ     ║
+╚══════════════════════════════════════╝
+Версия: 3.0 | Создатель: 7370566881
+"""
+
+import asyncio
+import logging
+import sys
+from datetime import datetime, timedelta
+from typing import Dict, List, Set
+import aiohttp
+from pyrogram import Client, filters, idle
+from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
+from pyrogram.enums import ParseMode
+from pyrogram.errors import (
+    SessionPasswordNeeded, PhoneCodeInvalid, 
+    FloodWait, PeerIdInvalid, ChannelInvalid
+)
+import colorama
+from colorama import Fore, Style
+
+# ================== КОНФИГУРАЦИЯ ==================
+colorama.init(autoreset=True)
+
+API_ID = 23258474
+API_HASH = "f5dd3f52675030a650ca2259f9fb79ce"
+BOT_TOKEN = "8379847495:AAHQIC5D9fipWz76h3-y0UOsY3amN5RUD_U"
+CREATOR_ID = 7370566881
+BOT_NAME = "RETSING BOT"
+BOT_LINK = "@RETSINGBOT"
+
+# Статистика и состояние
+mailing_data = {
+    "active": False,
+    "text": "",
+    "chats": [],
+    "start_time": None,
+    "sent_count": 0,
+    "failed_count": 0,
+    "current_cycle": 0
+}
+
+# ================== НАСТРОЙКА ЛОГИРОВАНИЯ ==================
+def setup_logging():
+    """Настройка красивого логирования"""
+    logging.basicConfig(
+        level=logging.INFO,
+        format=f'{Fore.CYAN}%(asctime)s{Style.RESET_ALL} - '
+               f'{Fore.GREEN}%(name)s{Style.RESET_ALL} - '
+               f'{Fore.YELLOW}%(levelname)s{Style.RESET_ALL} - '
+               f'{Fore.WHITE}%(message)s{Style.RESET_ALL}',
+        handlers=[
+            logging.StreamHandler(),
+            logging.FileHandler('retsing_bot.log', encoding='utf-8')
+        ]
+    )
+    return logging.getLogger(__name__)
+
+logger = setup_logging()
+
+# ================== КЛАСС БОТА ==================
+class RetsingBot:
+    def __init__(self):
+        self.client = None
+        self.session_name = "retsing_account"
+        self.is_authenticated = False
+        self.mailing_task = None
+        
+    async def start(self):
+        """Запуск бота"""
+        print(f"\n{Fore.MAGENTA}{'='*50}")
+        print(f"{Fore.YELLOW}🚀 ЗАПУСК {BOT_NAME}")
+        print(f"{Fore.MAGENTA}{'='*50}{Style.RESET_ALL}\n")
+        
+        # Уведомление администратору
+        await self.notify_admin("🟢 Бот успешно запущен и готов к работе!")
+        
+        # Инициализация клиента
+        self.client = Client(
+            self.session_name,
+            api_id=API_ID,
+            api_hash=API_HASH,
+            device_model="Retsing Pro",
+            app_version="3.0.0",
+            system_version="Retsing OS 1.0"
+        )
+        
+        # Регистрация обработчиков
+        self.register_handlers()
+        
+        # Запуск
+        await self.client.start()
+        self.is_authenticated = True
+        
+        logger.info(f"{Fore.GREEN}✅ Бот авторизован как: {self.client.me.first_name}")
+        
+        # Асинхронный idle
+        await idle()
+        
+    async def stop(self):
+        """Остановка бота"""
+        if self.mailing_task:
+            self.mailing_task.cancel()
+        
+        if self.client:
+            await self.client.stop()
+        
+        await self.notify_admin("🔴 Бот остановлен")
+        logger.info("Бот остановлен")
+    
+    async def notify_admin(self, message: str):
+        """Отправка уведомления администратору"""
+        try:
+            if self.client and self.is_authenticated:
+                await self.client.send_message(
+                    CREATOR_ID,
+                    f"📢 **Уведомление от {BOT_NAME}**\n\n{message}",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+        except Exception as e:
+            logger.error(f"Ошибка отправки уведомления: {e}")
+    
+    def register_handlers(self):
+        """Регистрация обработчиков команд"""
+        
+        @self.client.on_message(filters.command("start") & filters.private)
+        async def start_command(client: Client, message: Message):
+            """Обработчик команды /start"""
+            if message.from_user.id != CREATOR_ID:
+                await message.reply_text(
+                    "⛔ **Доступ запрещен!**\n"
+                    "Этот бот доступен только для создателя.",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+                return
+            
+            welcome_text = f"""
+🌟 **Добро пожаловать в {BOT_NAME}!** 🌟
+
+⚡ **Мощный инструмент для автоматической рассылки**
+🆓 **Полностью бесплатно!**
+
+📋 **Доступные команды:**
+▫️ `/help` - Показать справку
+▫️ `/setup` - Настроить рассылку
+▫️ `/launch` - Запустить рассылку
+▫️ `/stats` - Показать статистику
+▫️ `/stop` - Остановить рассылку
+
+🚀 **Быстрый старт:**
+1. Используйте `/setup` для настройки
+2. Запустите рассылку `/launch`
+3. Остановите когда нужно `/stop`
+
+💡 **Особенности:**
+• Автоматическая отправка каждые 2 минуты
+• Подробная статистика в реальном времени
+• Стабильная работа 24/7
+• Поддержка всех типов чатов
+
+📞 **Поддержка:** {BOT_LINK}
+            """
+            
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🚀 Начать настройку", callback_data="setup")],
+                [InlineKeyboardButton("📊 Посмотреть демо", callback_data="demo")],
+                [InlineKeyboardButton("👨‍💻 Поддержка", url=f"https://t.me/{BOT_LINK[1:]}")]
+            ])
+            
+            await message.reply_text(
+                welcome_text,
+                reply_markup=keyboard,
+                parse_mode=ParseMode.MARKDOWN
+            )
+            logger.info(f"Пользователь {message.from_user.id} вызвал /start")
+        
+        @self.client.on_message(filters.command("setup") & filters.private)
+        async def setup_command(client: Client, message: Message):
+            """Настройка рассылки"""
+            if message.from_user.id != CREATOR_ID:
+                return
+            
+            await message.reply_text(
+                "🛠 **Настройка рассылки**\n\n"
+                "Пожалуйста, отправьте текст для рассылки.\n"
+                "Вы можете использовать разметку Markdown.",
+                parse_mode=ParseMode.MARKDOWN
+            )
+        
+        @self.client.on_message(filters.command("launch") & filters.private)
+        async def launch_command(client: Client, message: Message):
+            """Запуск рассылки"""
+            if message.from_user.id != CREATOR_ID:
+                return
+            
+            if mailing_data["active"]:
+                await message.reply_text(
+                    "⚠️ **Рассылка уже активна!**\n"
+                    "Используйте `/stop` для остановки.",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+                return
+            
+            if not mailing_data["text"]:
+                await message.reply_text(
+                    "❌ **Сначала настройте рассылку!**\n"
+                    "Используйте `/setup` для настройки текста и чатов.",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+                return
+            
+            if not mailing_data["chats"]:
+                await message.reply_text(
+                    "❌ **Не указаны чаты для рассылки!**\n"
+                    "Добавьте хотя бы один чат с помощью /setup",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+                return
+            
+            # Запуск рассылки
+            mailing_data["active"] = True
+            mailing_data["start_time"] = datetime.now()
+            mailing_data["sent_count"] = 0
+            mailing_data["failed_count"] = 0
+            mailing_data["current_cycle"] = 0
+            
+            self.mailing_task = asyncio.create_task(self.start_mailing())
+            
+            await message.reply_text(
+                f"🚀 **РАССЫЛКА ЗАПУЩЕНА!**\n\n"
+                f"• **Текст:** {mailing_data['text'][:50]}...\n"
+                f"• **Чатов:** {len(mailing_data['chats'])}\n"
+                f"• **Интервал:** 2 минуты\n"
+                f"• **Старт:** {mailing_data['start_time'].strftime('%H:%M:%S')}\n\n"
+                f"📊 Используйте `/stats` для просмотра статистики",
+                parse_mode=ParseMode.MARKDOWN
+            )
+            
+            await self.notify_admin("🚀 Рассылка успешно запущена!")
+            logger.info(f"Рассылка запущена для {len(mailing_data['chats'])} чатов")
+        
+        @self.client.on_message(filters.command("stop") & filters.private)
+        async def stop_command(client: Client, message: Message):
+            """Остановка рассылки"""
+            if message.from_user.id != CREATOR_ID:
+                return
+            
+            if not mailing_data["active"]:
+                await message.reply_text(
+                    "ℹ️ **Рассылка не активна**",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+                return
+            
+            mailing_data["active"] = False
+            
+            if self.mailing_task:
+                self.mailing_task.cancel()
+            
+            elapsed = datetime.now() - mailing_data["start_time"]
+            
+            await message.reply_text(
+                f"🛑 **РАССЫЛКА ОСТАНОВЛЕНА!**\n\n"
+                f"📊 **Итоговая статистика:**\n"
+                f"• Успешно отправлено: {mailing_data['sent_count']}\n"
+                f"• Не удалось отправить: {mailing_data['failed_count']}\n"
+                f"• Циклов выполнено: {mailing_data['current_cycle']}\n"
+                f"• Общее время: {str(elapsed).split('.')[0]}\n"
+                f"• Производительность: {mailing_data['sent_count'] / max(elapsed.total_seconds() / 60, 1):.1f} сообщ./мин",
+                parse_mode=ParseMode.MARKDOWN
+            )
+            
+            await self.notify_admin("🛑 Рассылка остановлена")
+            logger.info("Рассылка остановлена пользователем")
+        
+        @self.client.on_message(filters.command("stats") & filters.private)
+        async def stats_command(client: Client, message: Message):
+            """Показать статистику"""
+            if message.from_user.id != CREATOR_ID:
+                return
+            
+            if not mailing_data["active"]:
+                await message.reply_text(
+                    "ℹ️ **Рассылка не активна**\n"
+                    "Используйте `/launch` для запуска",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+                return
+            
+            elapsed = datetime.now() - mailing_data["start_time"]
+            
+            stats_text = f"""
+📊 **СТАТИСТИКА РАССЫЛКИ**
+
+🟢 **Состояние:** Активна
+⏱ **Время работы:** {str(elapsed).split('.')[0]}
+🔄 **Цикл:** #{mailing_data['current_cycle'] + 1}
+
+✅ **Успешно:** {mailing_data['sent_count']} сообщений
+❌ **Ошибок:** {mailing_data['failed_count']}
+📈 **Эффективность:** {mailing_data['sent_count'] / max(mailing_data['sent_count'] + mailing_data['failed_count'], 1) * 100:.1f}%
+
+👥 **Чаты:** {len(mailing_data['chats'])} шт.
+⏳ **Следующий цикл:** через {120 - (elapsed.total_seconds() % 120):.0f} сек.
+
+🚀 **Производительность:** {mailing_data['sent_count'] / max(elapsed.total_seconds() / 60, 1):.1f} сообщ./мин
+            """
+            
+            await message.reply_text(stats_text, parse_mode=ParseMode.MARKDOWN)
+        
+        @self.client.on_message(filters.text & filters.private)
+        async def handle_text(client: Client, message: Message):
+            """Обработка текстовых сообщений"""
+            if message.from_user.id != CREATOR_ID:
+                return
+            
+            # Если это ответ на запрос текста для рассылки
+            if not message.text.startswith('/'):
+                # Предполагаем, что это текст рассылки
+                mailing_data["text"] = message.text
+                
+                # Добавляем подпись
+                full_text = f"{message.text}\n\n{'━' * 30}\n📨 **Сообщение переслано бесплатным ботом для рассылки [{BOT_NAME}](https://t.me/{BOT_LINK[1:]})**"
+                mailing_data["text"] = full_text
+                
+                # Запрашиваем чаты
+                await message.reply_text(
+                    f"✅ **Текст сохранен!**\n\n"
+                    f"📝 **Длина:** {len(full_text)} символов\n\n"
+                    f"Теперь отправьте ID чатов для рассылки.\n"
+                    f"**Формат:** `-1001234567890, -1009876543210`\n\n"
+                    f"💡 **Как получить ID чата:**\n"
+                    f"1. Добавьте бота в чат\n"
+                    f"2. Сделайте его администратором\n"
+                    f"3. ID появится в логах",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+            
+            # Если сообщение содержит ID чатов
+            elif all(c.isdigit() or c in '- ,' for c in message.text.replace(' ', '')):
+                try:
+                    chats = [int(chat_id.strip()) for chat_id in message.text.split(',')]
+                    mailing_data["chats"] = chats
+                    
+                    await message.reply_text(
+                        f"✅ **Чаты сохранены!**\n\n"
+                        f"👥 **Количество:** {len(chats)} чатов\n"
+                        f"📝 **Текст:** {mailing_data['text'][:50]}...\n\n"
+                        f"🚀 **Готово к запуску!**\n"
+                        f"Используйте `/launch` для начала рассылки",
+                        parse_mode=ParseMode.MARKDOWN
+                    )
+                except ValueError:
+                    await message.reply_text(
+                        "❌ **Неверный формат ID!**\n\n"
+                        "Используйте формат:\n"
+                        "`-1001234567890, -1009876543210`",
+                        parse_mode=ParseMode.MARKDOWN
+                    )
+        
+        @self.client.on_callback_query()
+        async def handle_callback(client: Client, callback_query):
+            """Обработка callback-запросов"""
+            if callback_query.from_user.id != CREATOR_ID:
+                await callback_query.answer("Доступ запрещен!", show_alert=True)
+                return
+            
+            if callback_query.data == "setup":
+                await callback_query.message.edit_text(
+                    "🛠 **Настройка рассылки**\n\n"
+                    "Пожалуйста, отправьте текст для рассылки.\n"
+                    "Вы можете использовать разметку Markdown.",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+            
+            elif callback_query.data == "demo":
+                await callback_query.message.edit_text(
+                    f"🎬 **Демонстрация работы {BOT_NAME}**\n\n"
+                    f"1. **Настройка** - `/setup`\n"
+                    f"2. **Запуск** - `/launch`\n"
+                    f"3. **Мониторинг** - `/stats`\n"
+                    f"4. **Остановка** - `/stop`\n\n"
+                    f"⚡ **Особенности:**\n"
+                    f"• Автоматическая отправка каждые 2 минуты\n"
+                    f"• Статистика в реальном времени\n"
+                    f"• Уведомления администратору\n"
+                    f"• Поддержка Markdown\n\n"
+                    f"💎 **Попробуйте прямо сейчас!**",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+            
+            await callback_query.answer()
+    
+    async def start_mailing(self):
+        """Запуск цикла рассылки"""
+        logger.info("Запуск цикла рассылки...")
+        
+        while mailing_data["active"]:
+            cycle_sent = 0
+            cycle_failed = 0
+            
+            logger.info(f"Начало цикла #{mailing_data['current_cycle'] + 1}")
+            
+            for chat_id in mailing_data["chats"]:
+                if not mailing_data["active"]:
+                    break
+                
+                try:
+                    await self.client.send_message(
+                        chat_id,
+                        mailing_data["text"],
+                        parse_mode=ParseMode.MARKDOWN
+                    )
+                    cycle_sent += 1
+                    mailing_data["sent_count"] += 1
+                    
+                    # Небольшая задержка между сообщениями
+                    await asyncio.sleep(0.5)
+                    
+                except FloodWait as e:
+                    logger.warning(f"FloodWait на {e.value} секунд для чата {chat_id}")
+                    await asyncio.sleep(e.value)
+                    continue
+                except (PeerIdInvalid, ChannelInvalid):
+                    logger.error(f"Неверный ID чата: {chat_id}")
+                    cycle_failed += 1
+                    mailing_data["failed_count"] += 1
+                except Exception as e:
+                    logger.error(f"Ошибка отправки в {chat_id}: {e}")
+                    cycle_failed += 1
+                    mailing_data["failed_count"] += 1
+            
+            # Обновление статистики цикла
+            mailing_data["current_cycle"] += 1
+            
+            # Отправка статистики администратору
+            if mailing_data["active"]:
+                elapsed = datetime.now() - mailing_data["start_time"]
+                
+                stats_msg = (
+                    f"📊 **Цикл #{mailing_data['current_cycle']} завершен**\n\n"
+                    f"✅ **Успешно:** {cycle_sent}\n"
+                    f"❌ **Ошибок:** {cycle_failed}\n"
+                    f"🔄 **Всего циклов:** {mailing_data['current_cycle']}\n"
+                    f"📈 **Всего отправлено:** {mailing_data['sent_count']}\n"
+                    f"⏱ **Время работы:** {str(elapsed).split('.')[0]}\n\n"
+                    f"⏳ **Следующий цикл через 2 минуты**"
+                )
+                
+                try:
+                    await self.client.send_message(
+                        CREATOR_ID,
+                        stats_msg,
+                        parse_mode=ParseMode.MARKDOWN
+                    )
+                except:
+                    pass
+                
+                # Ожидание перед следующим циклом
+                for i in range(120):  # 120 секунд = 2 минуты
+                    if not mailing_data["active"]:
+                        break
+                    await asyncio.sleep(1)
+        
+        logger.info("Цикл рассылки остановлен")
+
+# ================== ГРАФИЧЕСКИЙ ЗАПУСК ==================
+def print_banner():
+    """Печать красивого баннера"""
+    banner = f"""
+{Fore.MAGENTA}{'█'*60}
+{Fore.CYAN}{' '*10}╔══════════════════════════════════════════════╗
+{Fore.CYAN}{' '*10}║          {Fore.YELLOW}RETSING BOT v3.0{Fore.CYAN}                   ║
+{Fore.CYAN}{' '*10}║    {Fore.GREEN}ПРОФЕССИОНАЛЬНЫЙ БОТ ДЛЯ РАССЫЛОК{Fore.CYAN}     ║
+{Fore.CYAN}{' '*10}╚══════════════════════════════════════════════╝
+{Fore.MAGENTA}{'█'*60}
+
+{Fore.WHITE}🔧 Конфигурация:
+{Fore.CYAN}├── API ID: {Fore.YELLOW}{API_ID}
+{Fore.CYAN}├── Создатель: {Fore.YELLOW}{CREATOR_ID}
+{Fore.CYAN}├── Имя бота: {Fore.YELLOW}{BOT_NAME}
+{Fore.CYAN}└── Ссылка: {Fore.YELLOW}{BOT_LINK}
+
+{Fore.GREEN}✅ Статус: {Fore.YELLOW}Запуск...
+{Fore.CYAN}📊 Логи сохраняются в: {Fore.YELLOW}retsing_bot.log
+{Fore.CYAN}🚀 Для начала работы напишите боту: {Fore.YELLOW}/start
+
+{Fore.MAGENTA}{'━'*60}{Style.RESET_ALL}
+    """
+    print(banner)
+
+# ================== ОСНОВНАЯ ФУНКЦИЯ ==================
+async def main():
+    """Основная функция"""
+    print_banner()
+    
+    bot = RetsingBot()
+    
+    try:
+        await bot.start()
+    except KeyboardInterrupt:
+        logger.info("Получен сигнал прерывания (Ctrl+C)")
+    except Exception as e:
+        logger.error(f"Критическая ошибка: {e}")
+    finally:
+        await bot.stop()
+
+# ================== ЗАПУСК ==================
+if __name__ == "__main__":
+    # Проверка версии Python
+    if sys.version_info < (3, 7):
+        print(f"{Fore.RED}❌ Требуется Python 3.7 или выше!")
+        sys.exit(1)
+    
+    try:
+        # Запуск асинхронного цикла
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print(f"\n{Fore.YELLOW}👋 Бот завершил работу")
+        sys.exit(1)
